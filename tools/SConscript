@@ -1,0 +1,197 @@
+import os
+import json
+from operator import add
+from functools import reduce
+
+def _hammer_configs(target, source, env):
+    return target, env['HAMMER_CONFIGS'] + source
+
+def _hammer_actions(target, source, env, for_signature):
+    action = env['HAMMER_ACTION']
+    run_dir = [env['HAMMER_RUN_DIR']] if env['HAMMER_RUN_DIR'] else []
+    log = env['HAMMER_LOG'] if 'HAMMER_LOG' in env else '/dev/null'
+    out = env['HAMMER_OUT'] if 'HAMMER_OUT' in env else '/dev/null'
+    return [
+        Mkdir(x) for x in run_dir if not os.path.isdir(x)
+    ] + [
+        Delete(x) for x in [log, out] if x != '/dev/null'
+    ] + [' '.join([
+        env['HAMMER'], action, '-l', log, '-o', out
+    ] + reduce(add, [
+        ['-v', v.abspath] for v in source if os.path.splitext(v.name)[1] in ['.v', '.svf']
+    ], []) + reduce(add, [
+        ['-w', w.abspath] for w in source if os.path.splitext(w.name)[1] in ['.vcd', '.vpd']
+    ], []) + reduce(add, [
+        ['-p', p.abspath] for p in source if os.path.splitext(p.name)[1] in ['.json']
+    ], []) + reduce(add, [
+        ['--%s_rundir' % ('syn' if action == 'synthesis' else action), x] for x in run_dir
+    ], []) + env['HAMMER_FLAGS'] + (['>', '/dev/null'] if env['HAMMER_SILENT'] else []))]
+
+def _ucbsc_actions(target, source, env, for_signature):
+    srams_dir = os.path.join(env['TECH_DIR'], 'srams')
+    ucbsc_dir = os.path.join('tools', 'hammer-adept-plugins', 'tools', 'ucbsc')
+    cacti_dir = os.path.join(ucbsc_dir, 'cacti65')
+    return [
+        Delete(srams_dir),
+        Mkdir(srams_dir),
+        ' '.join(['make', '-C', os.path.abspath(cacti_dir), '-j']),
+        ' '.join([
+            'cd', srams_dir, '&&',
+            os.path.abspath(os.path.join(ucbsc_dir, 'ucbsc')),
+            source[0].abspath, '--all'
+        ])
+    ]
+
+def _gen_tech_files_tsmc45(env, tech_dir, tech_json):
+    tech = env['TECHNOLOGY']
+    tech_lib_json = os.path.join(tech_dir, '%s.lib.json' % tech)
+    tech_sram_json = os.path.join(tech_dir, 'srams', 'srams.json')
+
+    env.AppendUnique(HAMMER_CONFIGS=[tech_sram_json])
+    env.Append(BUILDERS={'UCBSC' : Builder(generator=_ucbsc_actions)})
+    env.UCBSC(tech_sram_json, tech_lib_json, TECH_DIR=tech_dir)
+    env.Precious(tech_sram_json)
+    env.NoClean(tech_sram_json)
+
+    return "", [tech_json, tech_sram_json]
+
+def gen_tech_files(env):
+    tech_name = env['TECHNOLOGY']
+    tech_dir = os.path.abspath(os.path.join('hammer-adept-plugins', 'technology', tech_name))
+    tech_json = os.path.join(tech_dir, tech_name + '.tech.json')
+
+    def gen_use_tech(target, source, env):
+        with open(source[0].abspath, 'r') as _f:
+            tech_config = json.load(_f)
+        tech_config["vlsi.core.technology_path"] = [
+            os.path.join('tools', 'hammer-adept-plugins', 'technology')
+        ]
+        with open(target[0].abspath, 'w') as _f:
+            json.dump(tech_config, _f)
+
+    use_tech_json = env.Command(
+        os.path.join(env['GEN_DIR'], 'use_%s.json' % tech_name),
+        os.path.join('hammer-adept-plugins', 'use_%s.json' % tech_name),
+        gen_use_tech)[0]
+    env.AppendUnique(HAMMER_CONFIGS=[use_tech_json])
+    tech_home, tech_jsons = _gen_tech_files_tsmc45(env, tech_dir, tech_json)
+
+def _gen_syn_config(target, source, env):
+    with open(target[0].abspath, 'w') as _f:
+        json.dump({
+            "vlsi.inputs.clocks" : [{
+                "name": "clock",
+                "period": "%f ns" % env['CLOCK_PERIOD']
+            }],
+            'synthesis.dc.compile_args': [
+                '-gate_clock'
+            ],
+            'synthesis.inputs.top_module': env['DESIGN'],
+            'synthesis.inputs.input_files': [
+                s.abspath for s in source
+            ],
+        }, _f)
+
+def _gen_par_config(target, source, env):
+    with open(target[0].abspath, 'w') as _f:
+        json.dump({
+            "par.inputs.top_module" : env['DESIGN'],
+            "par.inputs.input_files" : [source[0].abspath],
+            "par.inputs.post_synth_sdc" : source[1].abspath,
+            "par.icc.inputs.ddc" : source[2].abspath,
+            "par.icc.floorplan.custom_script" : source[3].abspath if len(source) > 3 else None,
+            "par.icc.zroute": env['TECHNOLOGY'] != 'tsmc45'
+        }, _f)
+
+def run_synthesis(env, rtl_v):
+    syn_dir = os.path.join(env['OUT_DIR'], 'syn-rundir')
+    syn_log = os.path.join(syn_dir, 'syn.log')
+    syn_out = os.path.join(syn_dir, 'syn.json')
+
+    syn_config = env.Command(
+        os.path.join(env['GEN_DIR'], 'synthesis.json'),
+        rtl_v,
+        _gen_syn_config)
+
+    syn = env.Precious(env.HAMMER(
+        [
+            os.path.join(syn_dir, 'results', env['DESIGN'] + '.mapped.v'),
+            os.path.join(syn_dir, 'results', env['DESIGN'] + '.mapped.sdc'),
+            os.path.join(syn_dir, 'results', env['DESIGN'] + '.mapped.ddc'),
+        ],
+        syn_config + [
+            f for f in env['HAMMER_DESIGN_CONFIG'] if os.path.exists(f)
+        ],
+        HAMMER_ACTION='synthesis',
+        HAMMER_LOG=syn_log,
+        HAMMER_OUT=syn_out,
+        HAMMER_RUN_DIR=syn_dir))
+    env.Alias('syn', syn)
+    env.Clean('syn', env.SideEffect([syn_dir, syn_log, syn_out], syn))
+
+    return syn
+
+def run_place_and_route(env, syn_v, syn_sdc, syn_ddc):
+    par_dir = os.path.join(env['OUT_DIR'], 'par-rundir')
+    par_log = os.path.join(par_dir, 'par.log')
+    par_out = os.path.join(par_dir, 'par.json')
+    par_config = env.Command(
+        os.path.join(env['GEN_DIR'], 'par.json'),
+        [syn_v, syn_sdc, syn_ddc],
+        _gen_par_config)
+    par_v = env.Precious(env.HAMMER(
+        [
+            os.path.join(par_dir, 'results', env['DESIGN'] + '.output.v'),
+        ],
+        par_config,
+        HAMMER_ACTION='par',
+        HAMMER_LOG=par_log,
+        HAMMER_OUT=par_out,
+        HAMMER_RUN_DIR=par_dir))
+    env.Alias('par', par_v)
+    env.Clean('par', env.SideEffect(
+        [par_dir, par_log, par_out], par_v))
+    return par_v
+
+def main():
+    Import('env')
+
+    hammer_home = os.path.abspath('hammer')
+    hammer_vlsi = os.path.join(hammer_home, 'src', 'hammer-vlsi')
+    hammer_config_dir = os.path.abspath('hammer-configs')
+
+    env['ENV']['HAMMER_HOME'] = hammer_home
+    env['ENV']['HAMMER_VLSI'] = hammer_vlsi
+    env.AppendENVPath('PATH', os.path.join(hammer_home, 'src', 'hammer-shell'))
+    env.AppendENVPath('PYTHONPATH', [
+        hammer_vlsi,
+        os.path.join(hammer_home, 'src'),
+        os.path.join(hammer_home, 'src', 'hammer-tech'),
+        os.path.join(hammer_home, 'src', 'jsonschema'),
+        os.path.join(hammer_home, 'src', 'python-jsonschema-objects'),
+        os.path.join(hammer_home, 'src', 'tools', 'pyyaml', 'lib3'),
+    ])
+    env['ENV']['MYPYPATH'] = env['ENV']['PYTHONPATH']
+    env.SetDefault(
+        HAMMER='hammer-vlsi',
+        HAMMER_CONFIG_DIR=hammer_config_dir,
+        HAMMER_FLAGS=[],
+        HAMMER_RUN_DIR=None,
+        HAMMER_SILENT=False)
+    env.AppendUnique(HAMMER_CONFIGS=[
+        env['ENV']['HAMMER_ENVIRONMENT_CONFIGS'].split(':') \
+        if 'HAMMER_ENVIRONMENT_CONFIGS' in env['ENV'] else \
+        os.path.join(hammer_config_dir, 'hammer_config.json'),
+        os.path.join(env['HAMMER_CONFIG_DIR'], 'use_synopsys.json')
+    ])
+    env.Append(BUILDERS={
+        'HAMMER': Builder(emitter=_hammer_configs, generator=_hammer_actions),
+    })
+
+    Import('rtl_v')
+    gen_tech_files(env)
+    syn_v, syn_sdc, syn_ddc = run_synthesis(env, rtl_v)
+    par_v = run_place_and_route(env, syn_v, syn_sdc, syn_ddc)
+
+if __name__ == 'SCons.Script':
+    main()

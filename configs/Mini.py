@@ -10,11 +10,11 @@ SIMMANI_ARGS=[
    "--module=" + os.path.abspath(os.path.join(
        "src", "main", "resources", "mini-modules.csv"))
 ]
+"""
 HAMMER_DESIGN_CONFIG=[
     os.path.abspath(os.path.join('tools', 'hammer-configs', 'mini.json'))
 ]
 assert os.path.isfile(HAMMER_DESIGN_CONFIG[0])
-"""
 
 _loadmem_dir=os.path.join(
     "designs", "riscv-mini", "src", "test", "resources")

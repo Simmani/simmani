@@ -158,6 +158,7 @@ variables.AddVariables(
     EnumVariable('DESIGN', 'Target design name', 'GCD',
                  allowed_values=EXAMPLES + MINI),
     ('LOADMEMS', 'Hex file to run (riscv-mini only)', []),
+    ('HAMMER_DESIGN_CONFIG', 'Design-specific hammer config file', []),
     ('WINDOWS', 'Window sizes for signal clustering', [64, 128, 256]),
     ('WINDOW', 'Window size for power-model regression', 256))
 
@@ -174,13 +175,15 @@ env = Environment(
     ]),
     VERILATOR='verilator --cc --exe',
     VCS='vcs -full64',
-    RISCV=os.environ.get('RISCV', '/home/centos/riscv'),
+    TECHNOLOGY='tsmc45',
     CLOCK_PERIOD=1.0
 )
 
 env.SetDefault(
     GEN_DIR=os.path.abspath(os.path.join('generated-src', env['DESIGN'])),
-    OUT_DIR=os.path.abspath(os.path.join('output', env['DESIGN'])))
+    OUT_DIR=os.path.abspath(os.path.join('output', env['DESIGN'])),
+    HAMMER_CONFIGS=(env['ENV']['HAMMER_ENVIRONMENT_CONFIGS']
+                    if 'HAMMER_ENVIRONMENT_CONFIGS' in env['ENV'] else None))
 
 env.Append(
     BUILDERS={
@@ -207,5 +210,9 @@ rtl_v, macro, tester_v = targets[0], targets[1], targets[2:]
 env.SConscript(
     os.path.join('src', 'main', 'verilog', 'SConscript'),
     exports=['env', 'rtl_v', 'macro', 'tester_v'])
+
+if env['HAMMER_CONFIGS']:
+    env.SConscript(os.path.join('tools', 'SConscript'),
+                   exports=['env', 'rtl_v'])
 
 run_testers(env)

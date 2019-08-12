@@ -1,0 +1,10 @@
+{
+  "vlsi.inputs.no_ungroup": [
+    "CSR*",
+    "ALU*",
+    "RegFile*",
+    "Datapath*",
+    "Core*",
+    "Cache*"
+  ]
+}

@@ -4,3 +4,12 @@
 [submodule "designs/riscv-mini"]
 	path = designs/riscv-mini
 	url = https://github.com/ucb-bar/riscv-mini.git
+[submodule "tools/hammer"]
+	path = tools/hammer
+	url = https://github.com/ucb-bar/hammer.git
+[submodule "tools/hammer-cad-plugins"]
+	path = tools/hammer-cad-plugins
+	url = git@github.com:ucb-bar/hammer-cad-plugins.git
+[submodule "tools/hammer-adept-plugins"]
+	path = tools/hammer-adept-plugins
+	url = git@github.com:ucb-bar/hammer-adept-plugins.git

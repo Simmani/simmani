@@ -1,0 +1,16 @@
+{
+  "vlsi.core.synthesis_tool": "dc",
+  "vlsi.core.par_tool": "icc",
+  "vlsi.core.formal_tool": "fm",
+  "vlsi.core.power_tool": "pt",
+  "vlsi.core.synthesis_tool_path": ["tools/hammer-cad-plugins/synthesis"],
+  "vlsi.core.synthesis_tool_path_meta": "append",
+  "vlsi.core.par_tool_path": ["tools/hammer-cad-plugins/par"],
+  "vlsi.core.par_tool_path_meta": "append",
+  "vlsi.core.formal_tool_path": ["tools/hammer-cad-plugins/formal"],
+  "vlsi.core.formal_tool_path_meta": "append",
+  "vlsi.core.power_tool_path": ["tools/hammer-cad-plugins/power"],
+  "vlsi.core.power_tool_path_meta": "append",
+  "formal.fm.verify": "false",
+  "par.outputs.output_ilms": "none"
+}

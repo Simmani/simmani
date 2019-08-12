@@ -1,0 +1,5 @@
+{
+  "synopsys.synopsys_home": "<your synopsys home>",
+  "technology.saed32.tarball_dir": "<your technology tarball path>",
+  "synopsys.SNPSLMD_LICENSE_FILE": "<your license file>"
+}

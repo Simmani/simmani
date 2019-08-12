@@ -1,0 +1,6 @@
+[submodule "firrtl"]
+	path = firrtl
+	url = https://github.com/freechipsproject/firrtl.git
+[submodule "designs/riscv-mini"]
+	path = designs/riscv-mini
+	url = https://github.com/ucb-bar/riscv-mini.git

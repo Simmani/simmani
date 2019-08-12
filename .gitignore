@@ -1,0 +1,7 @@
+publish
+generated-src
+output
+target
+.ivy2
+.sconsign.dblite
+*.swp

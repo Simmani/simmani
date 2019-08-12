@@ -14,6 +14,7 @@ HAMMER_DESIGN_CONFIG=[
     os.path.abspath(os.path.join('tools', 'hammer-configs', 'mini.json'))
 ]
 assert os.path.isfile(HAMMER_DESIGN_CONFIG[0])
+"""
 
 _loadmem_dir=os.path.join(
     "designs", "riscv-mini", "src", "test", "resources")
@@ -22,4 +23,3 @@ LOADMEMS=[
     for x in os.listdir(_loadmem_dir)
     if x.endswith(".hex")
 ]
-"""

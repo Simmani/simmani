@@ -1,0 +1,79 @@
+import os
+import logging
+from operator import add
+from functools import reduce
+
+######################
+### VCS
+######################
+
+def _vcs_actions(target, source, env, for_signature):
+    return [
+        Delete(env['CSRC_DIR']),
+        Delete(env['DAIDIR_DIR']),
+        ' '.join([
+            env['VCS']
+        ] + env['VCS_FLAGS'] + [
+            '-Mdir=' + env['CSRC_DIR'],
+            '-o', target[0].abspath,
+        ] + [
+            str(s.abspath) for s in source
+        ])
+    ]
+
+def compile_vcs(env, gen_dir, out_dir, srcs, binary, cmd):
+    csrc_dir = os.path.join(gen_dir, binary + '.csrc')
+    daidir_dir = os.path.join(out_dir, binary + '.daidir')
+    binary_path = os.path.join(out_dir, binary)
+    env.VCS(binary_path, srcs, CSRC_DIR=csrc_dir, DAIDIR_DIR=daidir_dir)
+    env.Alias(cmd, binary_path)
+    env.Clean(cmd, [csrc_dir, daidir_dir])
+    return binary_path
+
+
+def compile_testers(env):
+    Import('tester_v', 'rtl_v', 'macro')
+    env.Append(
+        VCS_FLAGS=[
+            '-sverilog',
+            '+define+TOP_MODULE=%sTester' % env['DESIGN'],
+            '+define+STOP_COND=!harness.reset',
+            '+define+PRINTF_COND=!harness.reset'
+        ])
+
+    for _v in tester_v:
+        tokens = os.path.splitext(os.path.basename(str(_v)))[0].split('-')
+        suffix = '' if len(tokens) < 2 else '-' + '-'.join(tokens[1:])
+        compile_vcs(
+            env,
+            env['GEN_DIR'],
+            env['OUT_DIR'],
+            ['harness.v', _v, rtl_v, macro],
+            '%s%s' % (env['DESIGN'], suffix),
+            'vcs')
+
+def main():
+    Import('env')
+
+    env.Append(BUILDERS={
+        'VCS' : Builder(generator=_vcs_actions)
+    })
+
+    env.AppendUnique(
+        VCS_FLAGS=[
+            '-quiet', '-debug_pp', '-timescale=1ns/1ps', '-notice', '-line',
+            '+rad', '+vc+list', '+vcs+initreg+random', '+vcs+lic+wait', '+no_notifier',
+            '+lint=all,noVCDE,noONGS,noUI,noIWU,noOUDPE,noVNGS,noNS',
+            '+define+CLOCK_PERIOD=${CLOCK_PERIOD}',
+            '+define+RANDOMIZE_MEM_INIT',
+            '+define+RANDOMIZE_REG_INIT',
+            '+define+RANDOMIZE_GARBAGE_ASSIGN',
+            '+define+RANDOMIZE_INVALID_ASSIGN',
+            '-CFLAGS', '\"-DVCS %s"' % ("-I%s/include" % env['ENV']['VCS_HOME']
+                                        if 'VCS_HOME' in env['ENV'] else "")
+        ])
+
+    compile_testers(env.Clone())
+
+if __name__ == 'SCons.Script':
+    main()

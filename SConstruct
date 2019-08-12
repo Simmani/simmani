@@ -6,7 +6,11 @@ from functools import reduce
 EXAMPLES = ['GCD', 'Stack', 'Risc', 'RiscSRAM']
 MINI = ['Tile']
 
-ROCKETCHIP_TEST_SUITES = ['asm', 'bmark']
+def _suffixes(env):
+    return [
+        os.path.basename(loadmem).replace('.hex', '')
+        for loadmem in env['LOADMEMS']
+    ] if env['LOADMEMS'] else [None, 5000]
 
 def compile_rtl_v(env):
     # Compile FIRRTL first
@@ -21,20 +25,16 @@ def compile_rtl_v(env):
     env.Precious('publish')
     env.NoClean('publish')
 
-    tester_v = [
-        os.path.join(env['GEN_DIR'], env['DESIGN'] + '.testers.v'), # Training
-        os.path.join(env['GEN_DIR'], env['DESIGN'] + '.testers-5000.v'), # Test
-    ]
-
-    targets = [
-        os.path.join(env['GEN_DIR'], env['DESIGN'] + '.v'),
-        os.path.join(env['GEN_DIR'], env['DESIGN'] + '.vfrag'),
-        os.path.join(env['GEN_DIR'], 'dumpvars.vfrag'),
-        os.path.join(env['GEN_DIR'], env['DESIGN'] + '.macros.v'),
-        tester_v
-    ]
-
-    env.SBT(targets, ['publish', os.path.abspath('macro.45nm.json')],
+    targets = env.SBT(
+        [
+            os.path.join(env['GEN_DIR'], env['DESIGN'] + '.v'),
+            os.path.join(env['GEN_DIR'], env['DESIGN'] + '.macros.v'),
+        ] + [
+            os.path.join(env['GEN_DIR'], env['DESIGN'] + '.tester%s.v' % (
+                '-' + str(suffix) if suffix is not None else ''))
+            for suffix in _suffixes(env)
+        ], 
+        ['publish', os.path.abspath('macro.45nm.json')],
         SBT_CMD='"%s"' % ' '.join([
             "runMain",
             'dessert.examples.Generator',
@@ -48,6 +48,25 @@ def compile_rtl_v(env):
     env.Alias('rtl-v', targets)
 
     return targets 
+
+def _run_testers_examples(env, backend, suffix=None):
+    out_dir = env['OUT_DIR']
+    name = env['DESIGN']
+    if suffix:
+        name += '-' + str(suffix)
+    emul = os.path.join(out_dir, name)
+    out = emul + '.out'
+    vcd = os.path.join(out_dir, name + '.vcd')
+    tgts = env.SIM([out, vcd], emul)
+    env.Precious(tgts)
+    env.Alias('run-testers', tgts)
+    return vcd
+
+def run_testers(env):
+    return [
+        _run_testers_examples(env, 'rtl', suffix)
+        for suffix in _suffixes(env)
+    ]
 
 def _get_submodule_files(submodule):
     return reduce(add, [
@@ -80,6 +99,43 @@ def _sbt_actions(target, source, env, for_signature):
         [env['SBT'], env['SBT_FLAGS'], env['SBT_CMD']]
     )] + (env['SBT_ACTIONS'] if 'SBT_ACTIONS' in env else [])
 
+def _sim_actions(target, source, env, for_signature):
+    disasm = '&>'
+    cmd = ' '.join([
+        'cd', source[0].dir.abspath, '&&',
+        './' + source[0].name
+    ] + [
+        '+vcdfile=' + w.abspath for w in target
+        if os.path.splitext(w.name)[1] == '.vcd'
+    ] + [
+        '+vcdplusfile=' + w.abspath for w in target
+        if os.path.splitext(w.name)[1] == '.vpd'
+    ] + [
+        '+loadmem=' + m.abspath for m in source
+        if os.path.splitext(m.name)[1] == '.hex'
+    ] + reduce(add, [
+        ['&>', o.abspath] for o in target
+        if os.path.splitext(o.name)[1] == '.out'
+    ], []))
+
+    def check(target, source, env):
+        out = [
+            o for o in target
+            if os.path.splitext(o.name)[1] == '.out'
+        ]
+        lines = [
+            l for l in out[0].get_text_contents().splitlines()
+            if 'Fatal' in l or 'FAIL' in l
+        ]
+        for _l in lines:
+            logging.error(_l)
+        return '\n'.join(lines)
+
+    dirs = [os.path.dirname(t.abspath) for t in target]
+    return [
+        Mkdir(d) for d in dirs if not os.path.isdir(d)
+    ] + [cmd, check]
+
 for design in EXAMPLES:
     AddOption('--' + design,
               dest=design,
@@ -101,6 +157,7 @@ variables.AddVariables(
                  allowed_values=['dessert.examples', 'mini']),
     EnumVariable('DESIGN', 'Target design name', 'GCD',
                  allowed_values=EXAMPLES + MINI),
+    ('LOADMEMS', 'Hex file to run (riscv-mini only)', []),
     ('WINDOWS', 'Window sizes for signal clustering', [64, 128, 256]),
     ('WINDOW', 'Window size for power-model regression', 256))
 
@@ -128,6 +185,7 @@ env.SetDefault(
 env.Append(
     BUILDERS={
         'SBT': Builder(generator=_sbt_actions, emitter=_scala_srcs),
+        'SIM': Builder(generator=_sim_actions),
     },
 )
 
@@ -142,4 +200,12 @@ if GetOption('num_jobs') < 8:
     SetOption('num_jobs', max(num_cpus-4, 8))
 print("# of job: %d" % GetOption('num_jobs'))
 
-rtl_v, vfrag, dumpvars, macro, tester_v = compile_rtl_v(env)
+targets = compile_rtl_v(env)
+rtl_v, macro, tester_v = targets[0], targets[1], targets[2:]
+
+# Compile testers
+env.SConscript(
+    os.path.join('src', 'main', 'verilog', 'SConscript'),
+    exports=['env', 'rtl_v', 'macro', 'tester_v'])
+
+run_testers(env)

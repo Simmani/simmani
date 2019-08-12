@@ -31,7 +31,6 @@ object Compiler {
     dir.mkdirs
     val fir     = new FileWriter(new File(dir, s"${chirrtl.main}.fir"))
     val verilog = new FileWriter(new File(dir, s"${chirrtl.main}.v"))
-    val vfrag   = new FileWriter(new File(dir, s"${chirrtl.main}.vfrag"))
     val state   = (new LowFirrtlCompiler).compile(
       CircuitState(chirrtl, ChirrtlForm, annos), customTransforms)
     val result  = (new Compiler).compileAndEmit(state, Nil)
@@ -39,7 +38,6 @@ object Compiler {
     fir.close
     verilog write result.getEmittedCircuit.value
     verilog.close
-    genVerilogFragment(chirrtl.main, io, vfrag)
     annos foreach {
       case barstools.macros.MacroCompilerAnnotation(_, params) =>
         // Generate verilog for macros

@@ -182,6 +182,7 @@ env = Environment(
 env.SetDefault(
     GEN_DIR=os.path.abspath(os.path.join('generated-src', env['DESIGN'])),
     OUT_DIR=os.path.abspath(os.path.join('output', env['DESIGN'])),
+    PWR_DIR=os.path.abspath(os.path.join('power', env['DESIGN'])),
     HAMMER_CONFIGS=(env['ENV']['HAMMER_ENVIRONMENT_CONFIGS']
                     if 'HAMMER_ENVIRONMENT_CONFIGS' in env['ENV'] else None))
 
@@ -191,6 +192,17 @@ env.Append(
         'SIM': Builder(generator=_sim_actions),
     },
 )
+
+def _decider(dependency, target, prev_ni):
+    if dependency.name.endswith('.vcd') or dependency.name.endswith('power.out'):
+        # makefile
+        #return dependency.changed_timestamp_newer(target, prev_ni)
+        return not os.path.isfile(target.abspath) or \
+            os.path.getmtime(dependency.abspath) > os.path.getmtime(target.abspath)
+    # MD5-timestamp
+    return dependency.changed_timestamp_then_content(target, prev_ni)
+
+env.Decider(_decider)
 
 num_cpus = 0
 with open('/proc/cpuinfo', 'r') as _f:
@@ -210,9 +222,20 @@ rtl_v, macro, tester_v = targets[0], targets[1], targets[2:]
 env.SConscript(
     os.path.join('src', 'main', 'verilog', 'SConscript'),
     exports=['env', 'rtl_v', 'macro', 'tester_v'])
+vcds = run_testers(env)
 
+if os.path.exists(env['PWR_DIR']):
+    Execute(Mkdir(env['PWR_DIR']))
+
+power = [
+    os.path.join(
+        env['PWR_DIR'],
+        os.path.splitext(os.path.basename(vcd))[0] + '.out')
+    for vcd in vcds
+]
 if env['HAMMER_CONFIGS']:
-    env.SConscript(os.path.join('tools', 'SConscript'),
-                   exports=['env', 'rtl_v'])
-
-run_testers(env)
+    tester_power = env.SConscript(
+        os.path.join('tools', 'SConscript'),
+        exports=['env', 'rtl_v', 'vcds'])
+    for _p, _t in zip(power, tester_power):
+        env.Command(_p, _t, Copy('$TARGET', '$SOURCE'))

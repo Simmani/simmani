@@ -103,6 +103,22 @@ def _gen_par_config(target, source, env):
             "par.icc.zroute": env['TECHNOLOGY'] != 'tsmc45'
         }, _f)
 
+def _gen_power_config(target, source, env):
+    config = {
+        "vlsi.inputs.clocks" : [{
+            "name": "clock",
+            "period": "%f ns" % env['CLOCK_PERIOD']
+        }],
+        "power.inputs.top_module" : env['DESIGN'],
+        "power.inputs.input_files" : [source[0].abspath],
+        "power.pt.power_when": "!reset",
+        "power.pt.rtl_trace": True,
+        "power.pt.power_analysis_mode": "time_based",
+        "power.pt.testbench": "harness/tester/dut"
+    }
+    with open(target[0].abspath, 'w') as _f:
+        json.dump(config, _f)
+
 def run_synthesis(env, rtl_v):
     syn_dir = os.path.join(env['OUT_DIR'], 'syn-rundir')
     syn_log = os.path.join(syn_dir, 'syn.log')
@@ -153,6 +169,33 @@ def run_place_and_route(env, syn_v, syn_sdc, syn_ddc):
         [par_dir, par_log, par_out], par_v))
     return par_v
 
+def run_power(env, vcd, config, out_dir, time_based=True):
+    benchmark = os.path.splitext(os.path.basename(vcd))[0]
+    run_dir = os.path.join(out_dir, 'power-' + benchmark)
+    log = os.path.join(run_dir, 'power-%s.log' % benchmark)
+    target = os.path.join(run_dir, 'results', 'power.out')
+    env.Clean(target, env.SideEffect(log, env.HAMMER(
+        target,
+        [vcd, config],
+        HAMMER_ACTION='power',
+        HAMMER_LOG=log,
+        HAMMER_RUN_DIR=run_dir,
+        HAMMER_SILENT=True)))
+    return target
+
+def run_tester_power(env, verilog, vcds):
+    out_dir = env['OUT_DIR']
+    tester_config = env.Command(
+        os.path.join(env['GEN_DIR'], 'power.json'),
+        verilog,
+        _gen_power_config)
+    tester_power = [
+        run_power(env, vcd, tester_config, out_dir)
+        for vcd in vcds
+    ]
+    env.Alias('power', tester_power)
+    return tester_power
+
 def main():
     Import('env')
 
@@ -188,10 +231,13 @@ def main():
         'HAMMER': Builder(emitter=_hammer_configs, generator=_hammer_actions),
     })
 
-    Import('rtl_v')
+    Import('rtl_v', 'vcds')
     gen_tech_files(env)
     syn_v, syn_sdc, syn_ddc = run_synthesis(env, rtl_v)
     par_v = run_place_and_route(env, syn_v, syn_sdc, syn_ddc)
+    power = run_tester_power(env, par_v, vcds)
+    return power
 
 if __name__ == 'SCons.Script':
-    main()
+    power = main()
+    Return('power')

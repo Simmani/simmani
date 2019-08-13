@@ -241,6 +241,12 @@ if env['HAMMER_CONFIGS']:
         exports=['env', 'rtl_v', 'vcds'])
     for _p, _t in zip(power, tester_power):
         env.Command(_p, _t, Copy('$TARGET', '$SOURCE'))
+elif env['DESIGN'] in MINI:
+    env.Command(power, None, [
+        'cd %s && '
+        'git clone https://github.com/Simmani/riscv-mini-power-traces && '
+        'tar -xvf riscv-mini-power-traces/mini-power.tar.gz' % env['PWR_DIR']
+    ])
 
 env.SConscript(
     os.path.join('simmani', 'SConscript'),

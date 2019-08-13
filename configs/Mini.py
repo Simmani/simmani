@@ -5,7 +5,6 @@ DESIGN="Tile"
 WINDOW=120
 WINDOWS=[4, 6, 8, 10, 12]
 SIMMANI_ARGS=[
-   "--num=20",
    "--module=" + os.path.abspath(os.path.join(
        "src", "main", "resources", "mini-modules.csv"))
 ]

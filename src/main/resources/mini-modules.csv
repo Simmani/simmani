@@ -1,0 +1,9 @@
+Tile
+Tile.dcache,DCache
+Tile.icache,ICache
+Tile.core.ctrl,Ctrl
+Tile.core.dpath,Datapath
+Tile.core.dpath.csr,CSR
+Tile.core.dpath.regFile,RegFile
+Tile.core.dpath.alu,ALU
+Misc

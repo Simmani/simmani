@@ -1,0 +1,263 @@
+import os
+import csv
+import json
+from operator import add
+from functools import reduce
+from scipy.stats.mstats import gmean
+
+def _vcd_files(source):
+    return [
+        v.abspath for v in source if v.name.endswith('.vcd')
+    ]
+
+def _pwr_files(source):
+    return [
+        o.abspath for o in source if o.name.endswith('.out')
+    ]
+
+def _cluster_srcs(target, source, env):
+    return target, [
+        'cluster.py'
+    ] + source + [
+        os.path.join('model', 'clustering.py'),
+        os.path.join('utils', 'vcd.py'),
+        os.path.join('utils', 'toggle.py')
+    ]
+
+def _cluster_action(target, source, env, for_signature):
+    return ' '.join([
+        source[0].abspath,
+        '--dir', env['CLUSTER_DIR'],
+        '--window', str(env['WINDOW']),
+        '--toggle', source[1].abspath
+    ] + env['SIMMANI_ARGS'] + [
+        '&>', env['CLUSTER_OUT']
+    ])
+
+def _train_srcs(target, source, env):
+    module_file = [
+        arg[9:] for arg in env['SIMMANI_ARGS']
+        if arg.startswith('--module=')
+    ]
+    return target, [
+        'train.py'
+    ] + source + [
+        os.path.join('model', 'regression.py'),
+        os.path.join('utils', 'toggle.py'),
+        os.path.join('utils', 'power.py')
+    ] + module_file
+
+def _train_action(target, source, env, for_signature):
+    return ' '.join([
+        source[0].abspath,
+        '--signals', source[1].abspath,
+        '--toggle', source[2].abspath,
+        '--dir', env['TRAIN_DIR'],
+        '--window', str(env['WINDOW']),
+        '--max', str(env['MAX_SIGNALS']),
+        '--out'
+    ] + _pwr_files(source[3:]) + env['SIMMANI_ARGS'] + [
+        '&>', env['TRAIN_OUT']
+    ])
+
+def _model_action(target, source, env):
+    signals = None
+    model = None
+    bic = float('inf')
+    rows = list()
+    for window, _s, _m, stats in zip(
+            env['WINDOWS'], source[::3], source[1::3], source[2::3]):
+        if not stats.get_text_contents():
+            continue
+        with open(stats.abspath) as _f:
+            reader = csv.reader(_f)
+            r2s = list()
+            bics = list()
+            for i, line in enumerate(reader):
+                if i == 0:
+                    assert len(line) > 2
+                    assert line[2] == 'BIC'
+                elif i == 1:
+                    pass
+                    _r2 = float(line[1])
+                    _bic = float(line[2])
+                else:
+                    r2s.append(float(line[1]))
+                    bics.append(float(line[2]))
+            if r2s and bics:
+                _r2 = gmean(r2s)
+                _bic = sum(bics)
+            _num = len(_s.get_text_contents().splitlines())
+            print('Window: %d, #Signals: %d, R2: %f, BIC: %f' % (
+                window, _num, _r2, _bic))
+            rows.append((window, _num, _r2, _bic))
+            if bic > _bic:
+                bic = _bic
+                signals = _s
+                model = _m
+
+    stat_filename = os.path.join(env['SIMMANI_DIR'], 'model_stats.csv')
+    with open(stat_filename, 'w') as _f:
+        writer = csv.writer(_f)
+        writer.writerow(['Window', '#Signals', 'R^2', 'BIC'])
+        for row in rows:
+            writer.writerow(row)
+
+    if signals:
+        Execute(Copy(target[0], signals))
+    if model:
+        Execute(Copy(target[1], model))
+
+def _test_srcs(target, source, env):
+    return target, [
+        os.path.join('simmani', 'test.py')
+    ] + source + [
+        os.path.join('simmani', 'utils', 'vcd.py'),
+        os.path.join('simmani', 'utils', 'toggle.py'),
+        os.path.join('simmani', 'utils', 'power.py'),
+        os.path.join('simmani', 'utils', 'data.py')
+    ]
+
+def _test_action(source, target, env, for_signature):
+    return ' '.join([
+        source[0].abspath,
+        '--dir', env['SIMMANI_DIR'],
+        '--window', str(env['WINDOW']),
+        '--model', source[1].abspath,
+        '--out', source[2].abspath,
+        '--vcd', source[3].abspath,
+        '--toggle', source[4].abspath
+    ] + env['SIMMANI_ARGS'] + [
+        '&>', env['TEST_OUT']
+    ])
+
+def _test_actions(source, target, env):
+    for vcd, out in zip(_vcd_files(source[2:]), _pwr_files(source[2:])):
+        benchmark = os.path.splitext(os.path.basename(vcd))[0]
+        toggle = os.path.join(
+            os.path.dirname(vcd),
+            benchmark + '_toggle_%d.csv' % int(env['WINDOW']))
+        env.Alias('test-toggle', env.Precious(env.Toggle(toggle, [vcd, source[0]])))
+        test_out = os.path.join(env['SIMMANI_DIR'], 'test-%s.out' % benchmark)
+        test_stats = os.path.join(env['SIMMANI_DIR'], 'test-stats-%s.csv' % benchmark)
+        env.Alias('simmani-test', env.Test(
+            test_stats, [source[1], out, vcd, toggle], TEST_OUT=test_out))
+        env.Clean(test_stats, env.SideEffect(test_out, test_stats))
+
+def _toggle_emitter(target, source, env):
+    return target, env['VCD_READER'] + source
+
+def _toggle_action(target, source, env, for_signature):
+    return ' '.join([
+        source[0].abspath,
+        '+window=%d' % int(env['WINDOW']),
+        '+out=' + target[0].abspath
+    ] + [
+        '+vcd=' + vcd for vcd in _vcd_files(source[1:])
+    ] + [
+        '+signals=' + signals.abspath for signals in source[1:]
+        if signals.name.startswith('signals') and signals.name.endswith('.csv')
+    ])
+
+def simmani_train(env, _srcs):
+    if env['LOADMEMS']:
+        srcs = [
+            s for s in _srcs if '-large' not in s
+        ]
+    else:
+        srcs = [
+            s for s in _srcs if str(5000) not in s
+        ]
+
+    train_toggle = os.path.join(
+        env['OUT_DIR'],
+        'train_toggle_%d.csv' % int(env['WINDOW']))
+    env.Alias('toggle', env.Precious(env.Toggle(
+        train_toggle, [s for s in srcs if 'vcd' in s])))
+
+    signal_files, model_files, stat_files = [], [], []
+    cluster_jobs = GetOption('num_jobs') // 4
+    train_jobs = (GetOption('num_jobs') // 8) + 1
+    for i, window in enumerate(env['WINDOWS']):
+        toggle = os.path.join(
+            env['OUT_DIR'], 'cluster_toggle_%s.csv' % window)
+        env.Alias('toggle', env.Precious(env.Toggle(
+            toggle, [s for s in srcs if 'vcd' in s], WINDOW=window)))
+
+        train_dir = os.path.join(env['SIMMANI_DIR'], 'window-%d' % window)
+        cluster_out = os.path.join(train_dir, 'cluster.out')
+        signals = os.path.join(train_dir, 'signals_%s.csv' % window)
+        env.Alias('simmani-cluster', env.Cluster(
+            signals, toggle,
+            WINDOW=window,
+            CLUSTER_DIR=train_dir,
+            CLUSTER_OUT=cluster_out))
+        env.Clean('simmani-cluster', env.SideEffect(cluster_out, signals))
+        env.SideEffect('#simmani-cluster-%d' % (i % cluster_jobs), signals)
+        signal_files.append(signals)
+
+        train_out = os.path.join(train_dir, 'train.out')
+        model = os.path.join(train_dir, 'model.csv')
+        stats = os.path.join(train_dir, 'model-stats.csv')
+        env.Alias('simmani-train', env.Train(
+            [model, stats],
+            [signals, train_toggle] + [s for s in srcs if 'vcd' not in s],
+            TRAIN_DIR=train_dir,
+            TRAIN_OUT=train_out))
+        env.Clean('simmani-train', env.SideEffect(train_out, [model, stats]))
+        env.SideEffect('#simmani-train-%d' % (i % train_jobs), [model, stats])
+        model_files.append(model)
+        stat_files.append(stats)
+
+    targets = env.Model(
+        [
+            os.path.join(env['SIMMANI_DIR'], 'signals.csv'),
+            os.path.join(env['SIMMANI_DIR'], 'model.csv')
+        ],
+        [i for l in zip(signal_files, model_files, stat_files) for i in l])
+    env.Alias('simmani-model', targets)
+    return targets
+
+def simmani_test(env, signals, _srcs):
+    if env['LOADMEMS']:
+        srcs = [
+            s for s in _srcs if '.riscv' in str(s)
+        ]
+    else:
+        srcs = [
+            s for s in _srcs if str(5000) in str(s)
+        ]
+    env.Alias(['simmani-test', 'test-toggle'], env.AlwaysBuild(env.Command(
+        '#simmani-test', signals + srcs, _test_actions)))
+
+def main():
+    Import('env')
+
+    env.SetDefault(
+        SIMMANI_DIR=os.path.join(env['PWR_DIR'], 'simmani')
+    )
+
+    if not os.path.exists(env['SIMMANI_DIR']):
+        Execute(Mkdir(env['SIMMANI_DIR']))
+
+    env.Append(BUILDERS={
+        'Toggle'    : Builder(emitter=_toggle_emitter, generator=_toggle_action),
+        'Cluster'   : Builder(emitter=_cluster_srcs, generator=_cluster_action),
+        'Train'     : Builder(emitter=_train_srcs, generator=_train_action),
+        'Test'      : Builder(emitter=_test_srcs, generator=_test_action),
+        'Model'     : Builder(action=_model_action),
+    })
+
+    vcd_reader = env.Program(
+        os.path.join('vcd_reader', 'vcd_reader.cc'),
+        CXXFLAGS=' '.join(['-O2', '-std=c++11', '-Wall']))
+    env.SetDefault(VCD_READER=vcd_reader)
+    env.Alias('vcd-reader', vcd_reader)
+
+    Import('vcds', 'power')
+
+    model = simmani_train(env, vcds + power)
+    simmani_test(env, model, vcds + power)
+
+if __name__ == 'SCons.Script':
+    main()

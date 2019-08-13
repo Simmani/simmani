@@ -159,8 +159,10 @@ variables.AddVariables(
                  allowed_values=EXAMPLES + MINI),
     ('LOADMEMS', 'Hex file to run (riscv-mini only)', []),
     ('HAMMER_DESIGN_CONFIG', 'Design-specific hammer config file', []),
+    ('SIMMANI_ARGS', 'Simmani arguments', []),
     ('WINDOWS', 'Window sizes for signal clustering', [64, 128, 256]),
-    ('WINDOW', 'Window size for power-model regression', 256))
+    ('WINDOW', 'Window size for power-model regression', 256),
+    ('MAX_SIGNALS', 'Maximum number of signals for simmani', 70))
 
 env = Environment(
     variables=variables,
@@ -239,3 +241,7 @@ if env['HAMMER_CONFIGS']:
         exports=['env', 'rtl_v', 'vcds'])
     for _p, _t in zip(power, tester_power):
         env.Command(_p, _t, Copy('$TARGET', '$SOURCE'))
+
+env.SConscript(
+    os.path.join('simmani', 'SConscript'),
+    exports=['env', 'vcds', 'power'])

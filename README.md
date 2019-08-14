@@ -55,3 +55,8 @@ scons --<design> simmani-train
 scons --<design> simmani-test
 ```
 Power training and test results are available in `power/<design>/simmani`.
+
+## Publications
+
+* Donggyu Kim, Jerry Zhao, Jonathan Bachrach, and Krste Asanović, **"Simmani: Runtime Power Modeling for Arbitrary RTL with Automatic Signal Selection"**, In proceedings of the 52nd IEEE/ACM International Symposium on Microarchitecture (MICRO'19), Columbus, OH, October 2019.
+* Donggyu Kim, **"FPGA-Accelerated Evaluation and Verification of RTL Designs"**, Ph.D. Thesis, University of California, Berkeley, May 2019.

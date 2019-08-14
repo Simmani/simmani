@@ -46,6 +46,7 @@ def compile_rtl_v(env):
 
     env.SideEffect('#sbt', targets)
     env.Alias('rtl-v', targets)
+    env.Default('rtl-v')
 
     return targets 
 
@@ -57,9 +58,7 @@ def _run_testers_examples(env, backend, suffix=None):
     emul = os.path.join(out_dir, name)
     out = emul + '.out'
     vcd = os.path.join(out_dir, name + '.vcd')
-    tgts = env.SIM([out, vcd], emul)
-    env.Precious(tgts)
-    env.Alias('run-testers', tgts)
+    env.Alias('run-testers', env.Precious(env.SIM(vcd, emul, OUT=out)))
     return vcd
 
 def run_testers(env):
@@ -113,18 +112,14 @@ def _sim_actions(target, source, env, for_signature):
     ] + [
         '+loadmem=' + m.abspath for m in source
         if os.path.splitext(m.name)[1] == '.hex'
-    ] + reduce(add, [
-        ['&>', o.abspath] for o in target
-        if os.path.splitext(o.name)[1] == '.out'
-    ], []))
+    ] + [
+        '&>', env['OUT']
+    ])
 
     def check(target, source, env):
-        out = [
-            o for o in target
-            if os.path.splitext(o.name)[1] == '.out'
-        ]
+        out = File(env['OUT'])
         lines = [
-            l for l in out[0].get_text_contents().splitlines()
+            l for l in out.get_text_contents().splitlines()
             if 'Fatal' in l or 'FAIL' in l
         ]
         for _l in lines:
@@ -196,7 +191,7 @@ env.Append(
 )
 
 def _decider(dependency, target, prev_ni, repo_node=None):
-    if dependency.name.endswith('.vcd') or dependency.name.endswith('power.out'):
+    if dependency.name.endswith('.vcd') or dependency.name.endswith('.out'):
         # makefile
         #return dependency.changed_timestamp_newer(target, prev_ni)
         return not os.path.isfile(target.abspath) or \

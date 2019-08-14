@@ -195,7 +195,7 @@ env.Append(
     },
 )
 
-def _decider(dependency, target, prev_ni):
+def _decider(dependency, target, prev_ni, repo_node=None):
     if dependency.name.endswith('.vcd') or dependency.name.endswith('power.out'):
         # makefile
         #return dependency.changed_timestamp_newer(target, prev_ni)
